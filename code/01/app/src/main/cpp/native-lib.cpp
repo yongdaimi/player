@@ -34,6 +34,9 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
 
     // 初始化解封装
     av_register_all();
+    // 注册解码器
+    avcodec_register_all();
+
     // 初始化网络
     avformat_network_init();
     // 打开文件
@@ -67,7 +70,7 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
                  as->codecpar->width,
                  as->codecpar->height,
                  as->codecpar->codec_id,
-                 as->codecpar->format); AVSampleFormat
+                 as->codecpar->format);
         } else if (as->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             LOGI("音频数据");
             audioStream = i;
@@ -79,10 +82,50 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
         }
     }
 
+    AVCodec *vc = avcodec_find_decoder(ic->streams[videoStream]->codecpar->codec_id); // 软解
+    // vc = avcodec_find_decoder_by_name("h264_mediacodec"); // 硬解
+    if (!vc) {
+        LOGE("avcodec_find_decoder[videoStream] failure");
+        return env->NewStringUTF(hello.c_str());
+    }
+    // 配置解码器
+    AVCodecContext *vct = avcodec_alloc_context3(vc);
+    avcodec_parameters_to_context(vct, ic->streams[videoStream]->codecpar);
+    vct->thread_count = 1;
+    // 打开解码器
+    int re = avcodec_open2(vct, vc, 0);
+    if (re != 0) {
+        LOGE("avcodec_open2 failure");
+        return env->NewStringUTF(hello.c_str());
+    }
+
+
+    /*
+    // 读取帧数据
+    AVPacket *packet = av_packet_alloc();
+    for (;;) {
+        int ret = av_read_frame(ic, packet);
+        if (ret != 0) {
+            LOGI("读取到结尾处");
+            int pos = 20 * r2d(ic->streams[videoStream]->time_base);
+            // 改变播放进度
+            av_seek_frame(ic, videoStream, pos, AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_FRAME);
+            continue;
+        }
+        LOGI("streamIndex=%d, size=%d, pts=%lld, flag=%d",
+             packet->stream_index,
+             packet->size,
+             packet->pts,
+             packet->flags
+        );
+        av_packet_unref(packet);
+    }
+     */
+
     // audioStream = av_find_best_stream(ic, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     // LOGI("av_find_best_stream, audio index is: %d", audioStream);
 
-
+    // 关闭上下文
     avformat_close_input(&ic);
     return env->NewStringUTF(hello.c_str());
 }
