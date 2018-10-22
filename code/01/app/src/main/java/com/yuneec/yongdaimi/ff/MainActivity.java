@@ -28,6 +28,4 @@ public class MainActivity extends AppCompatActivity {
      */
     public native String stringFromJNI();
 
-    public native boolean open(String uri, Object handle);
-
 }

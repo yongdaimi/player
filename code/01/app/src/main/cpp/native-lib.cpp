@@ -6,6 +6,10 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/jni.h>
+#include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
 }
 
 #define LOG_TAG "xp.chen"
@@ -50,6 +54,24 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
         jobject /* this */) {
     std::string hello = "Hello from C++";
     hello += avcodec_configuration();
+    return env->NewStringUTF(hello.c_str());
+}
+
+
+extern "C"
+JNIEXPORT
+jint JNI_OnLoad(JavaVM *vm,void *res)
+{
+    av_jni_set_java_vm(vm,0);
+    return JNI_VERSION_1_4;
+}
+
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_yuneec_yongdaimi_ff_XPlay_open(JNIEnv *env, jobject instance, jstring url_,
+                                        jobject surface) {
+    const char *path = env->GetStringUTFChars(url_, 0);
 
     // 初始化解封装
     av_register_all();
@@ -60,12 +82,11 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
     avformat_network_init();
     // 打开文件
     AVFormatContext *ic = NULL;
-    char path[] = "sdcard/1080.mp4";
     // char path[] = "/sdcard/qingfeng.flv";
     int ret = avformat_open_input(&ic, path, 0, 0);
     if (ret != 0) {
         LOGE("avformat_open_input() called failed: %s", av_err2str(ret));
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
     LOGI("avformat_open_input(): File open success.");
     LOGI("File duration is: %lld, nb_stream is: %d", ic->duration, ic->nb_streams);
@@ -114,7 +135,7 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
     // vCodec = avcodec_find_decoder_by_name("h264_mediacodec"); // 硬解
     if (!vCodec) {
         LOGE("avcodec_find_decoder() failed. can not found video decoder.");
-        return env->NewStringUTF(hello.c_str());
+        return ;
     }
     // 配置解码器上下文
     AVCodecContext *vc = avcodec_alloc_context3(vCodec);
@@ -125,7 +146,7 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
     ret = avcodec_open2(vc, vCodec, 0);
     if (ret != 0) {
         LOGE("avcodec_open2() failed. can not open video decoder, line is: %d", __LINE__);
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
 
     // 查找音频解码器
@@ -133,7 +154,7 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
     // aCodec= avcodec_find_decoder_by_name("h264_mediacodec"); // 硬解
     if (!aCodec) {
         LOGE("avcodec_find_decoder() failed. can not found audio decoder.");
-        return env->NewStringUTF(hello.c_str());
+        return;
     }
     // 配置解码器上下文
     AVCodecContext *ac = avcodec_alloc_context3(aCodec);
@@ -144,7 +165,7 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
     ret = avcodec_open2(ac, aCodec, 0);
     if (ret != 0) {
         LOGE("avcodec_open2() failed. can not open audio decoder");
-        return env->NewStringUTF(hello.c_str());
+        return ;
     }
 
     // 读取帧数据
@@ -152,6 +173,43 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
     AVFrame *frame = av_frame_alloc();
     int64_t start = getNowMs();
     int frameCount = 0;
+
+    // 初始化像素格式转换上下文
+    SwsContext *vctx = NULL;
+    int outWidth = 1280;
+    int outHeight = 720;
+    char *rgb = new char[1920*1080*4];
+    char *pcm = new char[48000*4*2];
+
+    // 初始化音频重采样上下文
+    SwrContext *actx = swr_alloc();
+    actx = swr_alloc_set_opts(
+            actx,
+            av_get_default_channel_layout(2),
+            AV_SAMPLE_FMT_S16,
+            ac->sample_rate,
+            av_get_default_channel_layout(ac->channels),
+            ac->sample_fmt,
+            ac->sample_rate,
+            0, 0
+    );
+
+    ret = swr_init(actx);
+    if (ret != 0) {
+        LOGE("swr_init failed");
+    } else {
+        LOGI("swr_init success");
+    }
+
+    // 显示窗口初始化
+    ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
+    if (!window) {
+        LOGE("ANativeWindow_fromSurface create failed");
+        return;
+    }
+    ANativeWindow_setBuffersGeometry(window, outWidth, outHeight, WINDOW_FORMAT_RGBA_8888);
+    ANativeWindow_Buffer wbuf;
+
 
     for (;;) {
 
@@ -196,45 +254,63 @@ Java_com_yuneec_yongdaimi_ff_MainActivity_stringFromJNI(
             }
             if (cc == vc) {
                 frameCount++;
+                vctx = sws_getCachedContext(
+                        vctx,
+                        frame->width,
+                        frame->height,
+                        (AVPixelFormat)frame->format,
+                        outWidth,
+                        outHeight,
+                        AV_PIX_FMT_RGBA,
+                        SWS_FAST_BILINEAR,
+                        0, 0, 0
+                );
+                if (!vctx) {
+                    LOGE("sws_getCachedContext failed!");
+                } else {
+                    // 开始像素格式转换
+                    uint8_t  *data[AV_NUM_DATA_POINTERS] = {0};
+                    data[0] = (uint8_t *)rgb;
+                    int lines[AV_NUM_DATA_POINTERS] = {0};
+                    lines[0] = outWidth * 4;
+                    int h = sws_scale(
+                            vctx,
+                            (const uint8_t **)frame->data,
+                            frame->linesize,
+                            0,
+                            frame->height,
+                            data, lines
+                    );
+                    LOGI("sws_scale = %d", h);
+                    if (h > 0) {
+                        ANativeWindow_lock(window, &wbuf, 0);
+                        uint8_t *dst = (uint8_t *)wbuf.bits; // 这个dst是用来交换的内存
+                        memcpy(dst, rgb, outWidth*outHeight*4);
+                        ANativeWindow_unlockAndPost(window);
+                    }
+                }
+            } else { // 音频部分
+                uint8_t *out[2] = {0};
+                out[0] = (uint8_t *)pcm;
+                // 音频重采样
+                int len = swr_convert(
+                        actx,
+                        out,
+                        frame->nb_samples,
+                        (const uint8_t **)frame->data,
+                        frame->nb_samples
+                );
+                LOGI("swr_convert = %d", len);
             }
             // LOGI("Receive a frame.........");
         }
     }
 
+    delete rgb;
+    delete pcm;
+
     // 关闭上下文
     avformat_close_input(&ic);
-    return env->NewStringUTF(hello.c_str());
+
+    env->ReleaseStringUTFChars(url_, path);
 }
-
-
-extern "C"
-JNIEXPORT jboolean JNICALL
-Java_com_yuneec_yongdaimi_ff_MainActivity_open(JNIEnv *env, jobject instance, jstring uri_,
-                                               jobject handle) {
-    const char *uri = env->GetStringUTFChars(uri_, 0);
-    FILE *fp = fopen(uri, "rb");
-    if (fp) {
-        LOGI("file open success");
-    } else {
-        LOGI("file open error");
-    }
-    env->ReleaseStringUTFChars(uri_, uri);
-    return JNI_TRUE;
-}
-
-
-extern "C"
-JNIEXPORT
-jint JNI_OnLoad(JavaVM *vm,void *res)
-{
-    av_jni_set_java_vm(vm,0);
-    return JNI_VERSION_1_4;
-}
-
-
-
-
-
-
-
-

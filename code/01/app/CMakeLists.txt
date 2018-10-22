@@ -28,6 +28,14 @@ set_target_properties(avformat PROPERTIES IMPORTED_LOCATION ${FF}/libavformat.so
 add_library(avutil SHARED IMPORTED)
 set_target_properties(avutil PROPERTIES IMPORTED_LOCATION ${FF}/libavutil.so)
 
+# swscale
+add_library(swscale SHARED IMPORTED)
+set_target_properties(swscale PROPERTIES IMPORTED_LOCATION ${FF}/libswscale.so)
+
+# swresample
+add_library(swresample SHARED IMPORTED)
+set_target_properties(swresample PROPERTIES IMPORTED_LOCATION ${FF}/libswresample.so)
+
 
 add_library( # Sets the name of the library.
              native-lib
@@ -60,6 +68,9 @@ target_link_libraries( # Specifies the target library.
                        avcodec
                        avformat
                        avutil
+                       swscale
+                       swresample
+                       android
 
                        # Links the target library to the log library
                        # included in the NDK.
