@@ -132,7 +132,7 @@ Java_com_yuneec_yongdaimi_ff_XPlay_open(JNIEnv *env, jobject instance, jstring u
 
     // 查找视频解码器
     AVCodec *vCodec = avcodec_find_decoder(ic->streams[videoStream]->codecpar->codec_id); // 软解
-    // vCodec = avcodec_find_decoder_by_name("h264_mediacodec"); // 硬解
+    vCodec = avcodec_find_decoder_by_name("h264_mediacodec"); // 硬解
     if (!vCodec) {
         LOGE("avcodec_find_decoder() failed. can not found video decoder.");
         return ;

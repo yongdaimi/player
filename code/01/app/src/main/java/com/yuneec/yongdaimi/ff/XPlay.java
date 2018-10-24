@@ -8,7 +8,6 @@ import android.view.SurfaceHolder;
 public class XPlay extends GLSurfaceView implements Runnable, SurfaceHolder.Callback{
 
 
-
     public static final String TEST_URL = "sdcard/1080.mp4";
 
 
@@ -41,10 +40,7 @@ public class XPlay extends GLSurfaceView implements Runnable, SurfaceHolder.Call
 
     }
 
-
-
     public native void open(String url, Object surface);
-
 
 
 }
